@@ -29,16 +29,22 @@ public class AliceController {
 
         if (userMessage == null || userMessage.isEmpty()) {
             return Mono.just(responseBuilder.buildSimpleResponse(
-                    "Привет! Я могу ответить на твой вопрос. Спроси меня о чем-нибудь.",
+                    "Привет! Я могу ответить на твой вопрос в строгом формате JSON",
                     false
             ));
         }
-
-        return gigachatService.getGigaChatResponse(userMessage)
+        return  gigachatService.getRawJsonResponse(userMessage)
                 .map(response -> responseBuilder.buildSimpleResponse(response, false))
                 .onErrorResume(e -> Mono.just(responseBuilder.buildSimpleResponse(
-                        "Извините, не удалось получить ответ. Попробуйте позже.",
-                        false
-                )));
+                       "Извините, не удалось получить ответ. Попробуйте позже.",
+                       false
+            )));
+
+//        return gigachatService.getGigaChatResponse(userMessage)
+//                .map(response -> responseBuilder.buildSimpleResponse(response, false))
+//                .onErrorResume(e -> Mono.just(responseBuilder.buildSimpleResponse(
+//                        "Извините, не удалось получить ответ. Попробуйте позже.",
+//                        false
+//                )));
     }
 }
