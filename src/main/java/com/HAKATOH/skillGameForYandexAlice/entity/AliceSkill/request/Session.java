@@ -2,6 +2,8 @@ package com.HAKATOH.skillGameForYandexAlice.entity.AliceSkill.request;
 
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class Session {
     private String message_id;

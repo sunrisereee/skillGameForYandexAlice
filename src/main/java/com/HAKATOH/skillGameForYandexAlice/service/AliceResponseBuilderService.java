@@ -6,7 +6,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 @Service
-public class ResponseBuilderService {
+public class AliceResponseBuilderService {
     public AliceResponse buildSimpleResponse(String text, boolean endSession) {
         Response responsePayload = createResponsePayload(text, text, endSession);
         return createAliceResponse(responsePayload);
