@@ -22,15 +22,16 @@ import java.util.List;
 @RequiredArgsConstructor
 public class GigaChatService {
 
+    private final GigaChatSessionCache sessionCache;
+
     @Value("${gigachat.api.token}")
     private String authKey;
 
-    private static final String SYSTEM_PROMPT = """
-    Ты — ИИ для текстовых квестов. Ты должен СТРОГО следовать этим правилам:
+    static final String SYSTEM_PROMPT = """
+    Ты — ИИ для текстовых квестов. СТРОГО следуй:
     
      1. Формат ответа - ТОЛЬКО JSON, без пояснений, без markdown, без лишних символов.
-     2. Если нарушишь формат - игра сломается.
-     3. Если ситуация и действия повторятся - игра сломается.
+     2. Если нарушишь формат или ситуация и действия повторятся - игра сломается.
     
      Структура ответа (повторяй её ТОЧНО каждый раз):
      {
@@ -45,8 +46,7 @@ public class GigaChatService {
         - Смерти без вариантов спасения
         - Достижении финала
         - Явном запросе "завершить игру"
-     2. options - ВСЕГДА 3 варианта, даже если ситуация кажется тупиковой
-     3. situation - максимум 2 предложения
+     2. options - ВСЕГДА 3 варианта
     """;
 
     private static final String INITIAL_PROMPT = """
@@ -155,6 +155,32 @@ public class GigaChatService {
                             .build());
 
             return response.choices().get(0).message().content();
+        });
+    }
+
+    private CompletionRequest buildRequest(List<ChatMessage> messages, String sessionId) {
+        return CompletionRequest.builder()
+                .model(ModelName.GIGA_CHAT)
+                .temperature(0.3f)
+                .messages(messages)
+                .build();
+    }
+
+    public Mono<String> getGameResponse(String historyJson, String actionUser, String sessionId) {
+        return Mono.fromCallable(() -> {
+            ChatMessage systemMessage = sessionCache.getSystemMessage(sessionId);
+
+            ChatMessage userMessage = ChatMessage.builder()
+                    .role(ChatMessage.Role.USER)
+                    .content(String.format("Контекст:%s\nВыбор:%s\nСгенерируй следующую ситуацию в игре согласно правилам и учитывая выбор пользователя.", historyJson, actionUser))
+                    .build();
+
+            CompletionResponse response = createClient().completions(
+                    buildRequest(List.of(systemMessage, userMessage),
+                            sessionId
+                    ));
+
+            return extractPureJson(response.choices().get(0).message().content());
         });
     }
 

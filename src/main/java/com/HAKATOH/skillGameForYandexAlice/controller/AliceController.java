@@ -6,6 +6,7 @@ import com.HAKATOH.skillGameForYandexAlice.entity.GameState;
 import com.HAKATOH.skillGameForYandexAlice.service.GigaChatService;
 import com.HAKATOH.skillGameForYandexAlice.service.GameStateService;
 import com.HAKATOH.skillGameForYandexAlice.service.AliceResponseBuilderService;
+import com.HAKATOH.skillGameForYandexAlice.service.GigaChatSessionCache;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,19 +28,20 @@ public class AliceController {
     private final GigaChatService gigachatService;
     private final GameStateService gameStateService;
     private final ObjectMapper objectMapper;
-
+    private final GigaChatSessionCache gigaChatSessionCache;
 
     @PostMapping("/game")
     public Mono<AliceResponse> handleAliceRequestGame(@RequestBody AliceRequest request) {
+        String sessionId = request.getSession().getSession_id();
         String userId = request.getSession().getUser_id();
         String userMessage = request.getRequest().getCommand();
         GameState state = gameStateService.getState(userId);
 
         if (shouldStartNewGame(userMessage, state)) {
-            return startNewGame(userId);
+            return startNewGame(userId, sessionId);
         }
 
-        return continueGame(userId, userMessage, state);
+        return continueGame(userId, userMessage, state, sessionId);
     }
 
     private boolean shouldStartNewGame(String userMessage, GameState state) {
@@ -47,7 +49,7 @@ public class AliceController {
                 userMessage.matches("(?i)(начать|новая|старт)");
     }
 
-    private Mono<AliceResponse> startNewGame(String userId) {
+    private Mono<AliceResponse> startNewGame(String userId, String sessionId) {
         return gigachatService.getInitialGameResponse()
                 .flatMap(response -> {
                     System.out.println("Гигачат начиниет игру" + response);
@@ -68,7 +70,7 @@ public class AliceController {
                     newState.setHistory(history.toString());
                     gameStateService.saveState(newState);
                     try {
-                        return buildResponse(response, userId);
+                        return buildResponse(response, userId, sessionId);
                     } catch (JsonProcessingException e) {
                         throw new RuntimeException(e);
                     }
@@ -76,7 +78,7 @@ public class AliceController {
                 .onErrorResume(e -> errorResponse("Не удалось начать игру"));
     }
 
-    private Mono<AliceResponse> buildResponse(String jsonResponse, String userId) throws JsonProcessingException {
+    private Mono<AliceResponse> buildResponse(String jsonResponse, String userId, String sessionId) throws JsonProcessingException {
         try {
             JsonNode node = objectMapper.readTree(jsonResponse);
             StringBuilder text = new StringBuilder(node.get("situation").asText())
@@ -89,7 +91,10 @@ public class AliceController {
 
             boolean endSession = node.has("is_ended") && node.get("is_ended").asBoolean();
 
-            if (endSession) gameStateService.deleteState(userId);
+            if (endSession) {
+                gameStateService.deleteState(userId);
+                gigaChatSessionCache.clearSession(sessionId);
+            }
 
             return responseBuilder.buildSimpleResponseAsync(text.toString(), endSession);
         } catch (JsonProcessingException e) {
@@ -103,11 +108,11 @@ public class AliceController {
         return responseBuilder.buildSimpleResponseAsync(message, false);
     }
 
-    private Mono<AliceResponse> continueGame(String userId, String userAction, GameState state) {
+    private Mono<AliceResponse> continueGame(String userId, String userAction, GameState state, String sessionId) {
         try {
             ArrayNode history = (ArrayNode) objectMapper.readTree(state.getHistory());
 
-            return gigachatService.getGameResponse(state.getHistory(), userAction)
+            return gigachatService.getGameResponse(state.getHistory(), userAction, sessionId)
                     .flatMap(response -> {
                         System.out.println("Гигачат продолжает" + response);
                         JsonNode newResponse;
@@ -125,7 +130,7 @@ public class AliceController {
                         gameStateService.saveState(updatedState);
 
                         try {
-                            return buildResponse(response, userId);
+                            return buildResponse(response, userId, sessionId);
                         } catch (JsonProcessingException e) {
                             throw new RuntimeException(e);
                         }
