@@ -29,15 +29,14 @@ public class GigaChatService {
     Ты — ИИ для текстовых квестов. Ты должен СТРОГО следовать этим правилам:
     
      1. Формат ответа - ТОЛЬКО JSON, без пояснений, без markdown, без лишних символов.
-     2. Температура ответа установлена на 0.3 для стабильности.
-     3. Если нарушишь формат - игра сломается.
+     2. Если нарушишь формат - игра сломается.
+     3. Если ситуация и действия повторятся - игра сломается.
     
      Структура ответа (повторяй её ТОЧНО каждый раз):
      {
          "situation": "1-2 предложения текущей ситуации",
          "options": ["вариант1 (до 10 слов)", "вариант2", "вариант3"],
-         "last_situation": "краткое описание предыдущей ситуации или пустая строка",
-         "last_action_user": "действие игрока или пустая строка",
+         "reduced_situation": "Текущая ситуация и выбор пользователя, в сокращенной форме, сократи до короткого предложения, сохранив смысл ситуации и выбор пользователя."
          "is_ended": false/true
      }
             
@@ -48,20 +47,10 @@ public class GigaChatService {
         - Явном запросе "завершить игру"
      2. options - ВСЕГДА 3 варианта, даже если ситуация кажется тупиковой
      3. situation - максимум 2 предложения
-     4. last_situation - сокращай до 10 слов если нужно
-        
-     Пример правильного ответа:
-     {
-         "situation": "Вы в тёмной комнате, слышите скрип двери",
-         "options": ["Осмотреться", "Крикнуть о помощи", "Попытаться открыть дверь"],
-         "last_situation": "Вы проснулись в незнакомом месте",
-         "last_action_user": "открыть глаза",
-         "is_ended": false
-     }
     """;
 
     private static final String INITIAL_PROMPT = """
-    Сгенерируй начало игры. Игрок проснулся в комнате, за окном ночь
+    Представь что ты оказался в темной комнате, за окном ночь.
     
     Требования к старту:
     1. Таинственная, но не пугающая атмосфера
@@ -81,47 +70,6 @@ public class GigaChatService {
     }
 
 
-    //Просто запрос нейросети с ответом
-    public Mono<String> getGigaChatResponse(String userMessage) {
-        return Mono.fromCallable(() -> {
-            GigaChatClient client = createClient();
-
-            CompletionResponse response = client.completions(
-                    CompletionRequest.builder()
-                            .model(ModelName.GIGA_CHAT)
-                            .message(ChatMessage.builder()
-                                    .content(userMessage)
-                                    .role(ChatMessage.Role.USER)
-                                    .build())
-                            .build());
-
-            return response.choices().get(0).message().content();
-        });
-    }
-
-    //Вопрос нейросети с системным промтом, задаем правила ответа
-    public Mono<String> getRawJsonResponse(String userMessage) {
-        return Mono.fromCallable(() -> {
-            GigaChatClient client = createClient();
-
-            CompletionResponse response = client.completions(
-                    CompletionRequest.builder()
-                            .model(ModelName.GIGA_CHAT)
-                            .messages(List.of(
-                                    ChatMessage.builder()
-                                            .role(ChatMessage.Role.SYSTEM)
-                                            .content(SYSTEM_PROMPT)
-                                            .build(),
-                                    ChatMessage.builder()
-                                            .role(ChatMessage.Role.USER)
-                                            .content(userMessage)
-                                            .build()))
-                            .build());
-
-            return extractPureJson(response.choices().get(0).message().content());
-        });
-    }
-
     //Убираем лишние символы, если они есть
     private String extractPureJson(String content) {
         return content.replaceAll("```json|```", "").trim();
@@ -129,17 +77,16 @@ public class GigaChatService {
 
 
     //Вопрос нейросети с системным промтом, для игры
-    public Mono<String> getGameResponse(String action, String situation, String historyJson) {
+    public Mono<String> getGameResponse(String historyJson, String actionUser) {
         return Mono.fromCallable(() -> {
             GigaChatClient client = createClient();
 
 
             String prompt = String.format("""
-            История игры: %s
-            Ситуация: %s
-            Выбранное действие: %s
-            Сгенерируй следующую ситуацию в игре согласно правилам.
-            """, historyJson, situation, action);
+            Контекст игры: %s
+            Выбор пользователя: %s
+            Сгенерируй следующую ситуацию в игре согласно правилам и учитывая выбор пользователя.
+            """, historyJson, actionUser);
             System.out.println("Запрос пользователя" + prompt);
             CompletionResponse response = client.completions(
                     CompletionRequest.builder()
@@ -180,4 +127,35 @@ public class GigaChatService {
             return extractPureJson(response.choices().get(0).message().content());
         });
     }
+
+    public Mono<String> compressHistory(String fullHistory) {
+        return Mono.fromCallable(() -> {
+            GigaChatClient client = createClient();
+
+            String prompt = String.format("""
+            Сожми эту историю игры, оставив только ключевые моменты (максимум 3 предложения):
+            %s
+            
+            Верни ТОЛЬКО сжатую версию без пояснений.
+            """, fullHistory);
+
+            CompletionResponse response = client.completions(
+                    CompletionRequest.builder()
+                            .model(ModelName.GIGA_CHAT)
+                            .messages(List.of(
+                                    ChatMessage.builder()
+                                            .role(ChatMessage.Role.SYSTEM)
+                                            .content("Ты помогаешь сжимать историю текстового квеста, оставляя только самое важное.")
+                                            .build(),
+                                    ChatMessage.builder()
+                                            .role(ChatMessage.Role.USER)
+                                            .content(prompt)
+                                            .build()))
+                            .temperature(0.3f)
+                            .build());
+
+            return response.choices().get(0).message().content();
+        });
+    }
+
 }

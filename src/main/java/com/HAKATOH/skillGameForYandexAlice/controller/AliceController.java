@@ -29,24 +29,6 @@ public class AliceController {
     private final ObjectMapper objectMapper;
 
 
-    @PostMapping("/")
-    public Mono<AliceResponse> handleAliceRequest(@RequestBody AliceRequest aliceRequest) {
-        String userMessage = aliceRequest.getRequest().getCommand();
-
-        if (userMessage == null || userMessage.isEmpty()) {
-            return Mono.just(responseBuilder.buildSimpleResponse(
-                    "Привет! Я могу ответить на твой вопрос в строгом формате JSON",
-                    false
-            ));
-        }
-        return  gigachatService.getGigaChatResponse(userMessage)
-                .map(response -> responseBuilder.buildSimpleResponse(response, false))
-                .onErrorResume(e -> Mono.just(responseBuilder.buildSimpleResponse(
-                       "Извините, не удалось получить ответ. Попробуйте позже.",
-                       false
-            )));
-    }
-
     @PostMapping("/game")
     public Mono<AliceResponse> handleAliceRequestGame(@RequestBody AliceRequest request) {
         String userId = request.getSession().getUser_id();
@@ -75,13 +57,11 @@ public class AliceController {
                     } catch (JsonProcessingException e) {
                         throw new RuntimeException(e);
                     }
-                    String firstSituation = responseNode.get("situation").asText();
+
+                    String firstSituation = responseNode.get("reduced_situation").asText();
 
                     ArrayNode history = objectMapper.createArrayNode();
-                    ObjectNode firstEntry = objectMapper.createObjectNode();
-                    firstEntry.put("action", "");
-                    firstEntry.put("situation", firstSituation);
-                    history.add(firstEntry);
+                    history.add(firstSituation);
 
                     GameState newState = new GameState();
                     newState.setUserId(userId);
@@ -125,15 +105,9 @@ public class AliceController {
 
     private Mono<AliceResponse> continueGame(String userId, String userAction, GameState state) {
         try {
-            // Парсим историю
             ArrayNode history = (ArrayNode) objectMapper.readTree(state.getHistory());
 
-            // Получаем последнюю ситуацию
-            JsonNode lastEntry = history.get(history.size() - 1);
-            String lastSituation = lastEntry.get("situation").asText();
-
-            // Получаем новый ответ от GigaChat
-            return gigachatService.getGameResponse(userAction, lastSituation, state.getHistory())
+            return gigachatService.getGameResponse(state.getHistory(), userAction)
                     .flatMap(response -> {
                         System.out.println("Гигачат продолжает" + response);
                         JsonNode newResponse;
@@ -142,23 +116,14 @@ public class AliceController {
                         } catch (JsonProcessingException e) {
                             throw new RuntimeException(e);
                         }
-                        ((ObjectNode)lastEntry).put("action", userAction);
+                        String newSituation = newResponse.get("reduced_situation").asText();
+                        history.add(newSituation);
 
-                        String newSituation = newResponse.get("situation").asText();
-
-                        // Обновляем историю
-                        ObjectNode newEntry = objectMapper.createObjectNode();
-                        newEntry.put("situation", newSituation);
-                        newEntry.put("action", "");
-                        history.add(newEntry);
-
-                        // Сохраняем только связки ситуация-действие
                         GameState updatedState = new GameState();
                         updatedState.setUserId(userId);
                         updatedState.setHistory(history.toString());
                         gameStateService.saveState(updatedState);
 
-                        // Формируем ответ пользователю
                         try {
                             return buildResponse(response, userId);
                         } catch (JsonProcessingException e) {
