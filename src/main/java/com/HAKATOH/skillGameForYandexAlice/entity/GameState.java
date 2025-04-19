@@ -23,4 +23,7 @@ public class GameState {
     @Column(name = "game_history", columnDefinition = "jsonb")
     @JdbcTypeCode(SqlTypes.JSON)
     private String history;
+
+    @Column(name = "message_count")
+    private int messageCount = 0;
 }

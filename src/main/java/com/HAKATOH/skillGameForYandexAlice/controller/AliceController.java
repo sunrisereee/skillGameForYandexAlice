@@ -111,8 +111,9 @@ public class AliceController {
     private Mono<AliceResponse> continueGame(String userId, String userAction, GameState state, String sessionId) {
         try {
             ArrayNode history = (ArrayNode) objectMapper.readTree(state.getHistory());
+            boolean needReminder = state.getMessageCount() % 3 == 0;
 
-            return gigachatService.getGameResponse(state.getHistory(), userAction, sessionId)
+            return gigachatService.getGameResponse(state.getHistory(), userAction, sessionId, needReminder)
                     .flatMap(response -> {
                         System.out.println("Гигачат продолжает" + response);
                         JsonNode newResponse;
@@ -127,6 +128,7 @@ public class AliceController {
                         GameState updatedState = new GameState();
                         updatedState.setUserId(userId);
                         updatedState.setHistory(history.toString());
+                        updatedState.setMessageCount(state.getMessageCount() + 1);
                         gameStateService.saveState(updatedState);
 
                         try {
