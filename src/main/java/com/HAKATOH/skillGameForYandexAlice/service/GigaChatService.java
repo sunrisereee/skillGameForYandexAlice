@@ -47,13 +47,15 @@ public class GigaChatService {
        - Смерти без вариантов спасения
        - Достижении финала
        - Явном запросе "завершить игру"
-    2. options - ВСЕГДА 3 варианта, даже если ситуация кажется тупиковой
+    2. options - ВСЕГДА 3 варианта, даже если ситуация кажется тупиковой, НИ В КОЕМ СЛУЧАЕ
+        - НЕ ДОЛЖНЫ СОДЕРЖАТЬ ВАРИАНТЫ БЕЗ ДЕЙСТВИЯ, В ВАРИАНТАХ ВСЕГДА ДЕЙСТВИЕ
     3. situation - максимум 2 предложения
+    4. situation НИ В КОЕМ СЛУЧАЕ НЕ ДОЛЖНЫ СОДЕРЖАТЬ ВАРИНАНТЫ ДЕЙСТВИЙ
     """;
 
     private static final String INITIAL_PROMPT = """
     Представь что ты оказался в темной комнате, за окном ночь.
-    
+       
     Требования к старту:
     1. Таинственная, но не пугающая атмосфера
     2. Намёк на возможную опасность
@@ -70,6 +72,7 @@ public class GigaChatService {
         "is_ended": false/true
     }
     В options ВАРИНАТЫ ДЕЙСТВИЯ ПОЛЬЗОВАТЕЛЯ
+    СИТУАЦИЯ НИ В КОЕМ СЛУЧАЕ НЕ ДОЛЖНА СОДЕРЖАТЬ ВАРИНАНТЫ ДЕЙСТВИЯ
     """;
 
     private GigaChatClient createClient() {
@@ -148,18 +151,26 @@ public class GigaChatService {
      //
 
     //Отправка ответа с напоминаем правил
-    public Mono<String> getGameResponse(String historyJson, String actionUser, String sessionId, Boolean reminder) {
+    public Mono<String> getGameResponse(String historyJson, String actionUser, String sessionId, Boolean reminder, Boolean isCicling) {
         return Mono.fromCallable(() -> {
             ChatMessage systemMessage = sessionCache.getSystemMessage(sessionId);
 
             ChatMessage finalSystemMessage = reminder ?
-                    addReminderToPrompt(systemMessage) :
+                    addMessageToPrompt(systemMessage, REMAINDER_PROMT) :
                     systemMessage;
+
+            ChatMessage finalVersionSystemMessage = isCicling ?
+                    addMessageToPrompt(finalSystemMessage, """
+                            Ты зациклился, такая ситуация уже была. СРОЧНО придумай УНИКАЛЬНУЮ ситуацию или игра СЛОМАЕТСЯ.
+                            СРОЧНО ПРИДУМАЙ НОВЫЕ ДЕЙСТВИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ""") :
+                    finalSystemMessage;
+
+
 
             String prompt = String.format("""
             Контекст:%s
             Выбор:%s
-            Сгенерируй следующую ситуацию в игре согласно правилам и учитывая выбор пользователя.
+            Сгенерируй следующую ситуацию в игре согласно правилам и учитывая выбор пользователя. Помни JSON ответ!
             """, historyJson, actionUser);
 
             ChatMessage userMessage = ChatMessage.builder()
@@ -168,7 +179,7 @@ public class GigaChatService {
                     .build();
 
             CompletionResponse response = createClient().completions(
-                    buildRequest(List.of(finalSystemMessage, userMessage),
+                    buildRequest(List.of(finalVersionSystemMessage, userMessage),
                             sessionId
                     ));
 
@@ -177,10 +188,10 @@ public class GigaChatService {
     }
 
 
-    private ChatMessage addReminderToPrompt(ChatMessage original) {
+    private ChatMessage addMessageToPrompt(ChatMessage original, String prompt) {
         return ChatMessage.builder()
                 .role(original.role())
-                .content(original.content() + REMAINDER_PROMT)
+                .content(original.content() + prompt)
                 .build();
     }
 

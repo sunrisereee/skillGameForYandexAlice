@@ -26,4 +26,9 @@ public class GameState {
 
     @Column(name = "message_count")
     private int messageCount = 0;
+
+    //Поле для последних вариантов гигачата, для фикса зацикливания
+    @Column(name = "last_options_history", columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private String lastOptionsHistory;
 }

@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 @AllArgsConstructor
@@ -56,20 +58,22 @@ public class AliceController {
                     JsonNode responseNode = null;
                     try {
                         responseNode = objectMapper.readTree(response);
-                    } catch (JsonProcessingException e) {
-                        throw new RuntimeException(e);
-                    }
 
-                    String firstSituation = responseNode.get("reduced_situation").asText();
+                        String firstSituation = responseNode.get("reduced_situation").asText();
 
-                    ArrayNode history = objectMapper.createArrayNode();
-                    history.add(firstSituation);
+                        //Добавляю варианты в бд
+                        List<String> newOptions = new ArrayList<>();
+                        responseNode.get("options").forEach(opt -> newOptions.add(opt.asText()));
 
-                    GameState newState = new GameState();
-                    newState.setUserId(userId);
-                    newState.setHistory(history.toString());
-                    gameStateService.saveState(newState);
-                    try {
+                        ArrayNode history = objectMapper.createArrayNode();
+                        history.add(firstSituation);
+
+                        GameState newState = new GameState();
+                        newState.setUserId(userId);
+                        newState.setHistory(history.toString());
+                        newState.setLastOptionsHistory(objectMapper.writeValueAsString(newOptions));
+                        gameStateService.saveState(newState);
+
                         return buildResponse(response, userId, sessionId);
                     } catch (JsonProcessingException e) {
                         throw new RuntimeException(e);
@@ -113,25 +117,55 @@ public class AliceController {
             ArrayNode history = (ArrayNode) objectMapper.readTree(state.getHistory());
             boolean needReminder = state.getMessageCount() % 3 == 0;
 
-            return gigachatService.getGameResponse(state.getHistory(), userAction, sessionId, needReminder)
+            //Проверка на цикличность
+            final boolean[] isCycling = {false};
+            List<String> lastOptions = state.getLastOptionsHistory() != null ?
+                    objectMapper.readValue(state.getLastOptionsHistory(), List.class) :
+                    new ArrayList<>();
+
+            //Хотя бы 3 варианта
+            if (lastOptions.size() > 3) {
+                long matches = lastOptions.stream()
+                        .filter(opt -> Collections.frequency(lastOptions, opt) >= 2)
+                        .distinct()
+                        .count();
+                isCycling[0] = matches >= 1; // Если хотя бы 1 вариант повторяется 2+ раза
+                System.out.println("Зацикливание" + isCycling[0]);
+            }
+
+
+            return gigachatService.getGameResponse(state.getHistory(), userAction, sessionId, needReminder, isCycling[0])
                     .flatMap(response -> {
                         System.out.println("Гигачат продолжает" + response);
                         JsonNode newResponse;
                         try {
                             newResponse = objectMapper.readTree(response);
-                        } catch (JsonProcessingException e) {
-                            throw new RuntimeException(e);
-                        }
-                        String newSituation = newResponse.get("reduced_situation").asText();
-                        history.add(newSituation);
 
-                        GameState updatedState = new GameState();
-                        updatedState.setUserId(userId);
-                        updatedState.setHistory(history.toString());
-                        updatedState.setMessageCount(state.getMessageCount() + 1);
-                        gameStateService.saveState(updatedState);
+                            List<String> newOptions = new ArrayList<>();
+                            newResponse.get("options").forEach(opt -> newOptions.add(opt.asText()));
+                            List<String> updatedOptionsHistory = new ArrayList<>(lastOptions);
+                            updatedOptionsHistory.addAll(newOptions);
 
-                        try {
+                            //Оставляем только последние 9 вариантов
+                            if (updatedOptionsHistory.size() > 9) {
+                                updatedOptionsHistory = updatedOptionsHistory.subList(updatedOptionsHistory.size() - 9, updatedOptionsHistory.size());
+                            }
+
+                            if (isCycling[0]) {
+                                updatedOptionsHistory.clear();
+                                System.out.println("Сброс истории вариантов для игрока " + userId);
+                            }
+
+                            String newSituation = newResponse.get("reduced_situation").asText();
+                            history.add(newSituation);
+
+                            GameState updatedState = new GameState();
+                            updatedState.setUserId(userId);
+                            updatedState.setHistory(history.toString());
+                            updatedState.setMessageCount(state.getMessageCount() + 1);
+                            updatedState.setLastOptionsHistory(updatedOptionsHistory.isEmpty() ? null : objectMapper.writeValueAsString(updatedOptionsHistory));
+                            gameStateService.saveState(updatedState);
+
                             return buildResponse(response, userId, sessionId);
                         } catch (JsonProcessingException e) {
                             throw new RuntimeException(e);
