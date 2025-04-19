@@ -198,7 +198,7 @@ public class GigaChatService {
     private CompletionRequest buildRequest(List<ChatMessage> messages, String sessionId) {
         return CompletionRequest.builder()
                 .model(ModelName.GIGA_CHAT)
-                .temperature(0.3f)
+                .temperature(0.5f)
                 .messages(messages)
                 .build();
     }
