@@ -36,7 +36,7 @@ public class GigaChatService {
   
     Структура ответа (повторяй её ТОЧНО каждый раз):
     {
-        "situation": "1-2 предложения текущей ситуации",
+        "situation": "2-3 предложения текущей ситуации",
         "options": ["вариант1 (до 10 слов)", "вариант2", "вариант3"],
         "reduced_situation": "Текущая ситуация и выбор пользователя, в сокращенной форме, сократи до короткого предложения, сохранив смысл ситуации и выбор пользователя."
         "is_ended": false/true
@@ -49,7 +49,7 @@ public class GigaChatService {
        - Явном запросе "завершить игру"
     2. options - ВСЕГДА 3 варианта, даже если ситуация кажется тупиковой, НИ В КОЕМ СЛУЧАЕ
         - НЕ ДОЛЖНЫ СОДЕРЖАТЬ ВАРИАНТЫ БЕЗ ДЕЙСТВИЯ, В ВАРИАНТАХ ВСЕГДА ДЕЙСТВИЕ
-    3. situation - максимум 2 предложения
+    3. situation - максимум 3 предложения
     4. situation НИ В КОЕМ СЛУЧАЕ НЕ ДОЛЖНЫ СОДЕРЖАТЬ ВАРИНАНТЫ ДЕЙСТВИЙ
     """;
 
@@ -66,7 +66,7 @@ public class GigaChatService {
     [НАПОМИНАНИЕ]
     ОТВЕТ СТРОГО В ФОРМАТЕ:
     {
-        "situation": "1-2 предложения текущей ситуации",
+        "situation": "2-3 предложения текущей ситуации",
         "options": ["вариант1 (до 10 слов)", "вариант2", "вариант3"],
         "reduced_situation": "Текущая ситуация и выбор пользователя, в сокращенной форме, сократи до короткого предложения, сохранив смысл ситуации и выбор пользователя."
         "is_ended": false/true
@@ -170,7 +170,7 @@ public class GigaChatService {
             String prompt = String.format("""
             Контекст:%s
             Выбор:%s
-            Сгенерируй следующую ситуацию в игре согласно правилам и учитывая выбор пользователя. Помни JSON ответ!
+            Сгенерируй следующую интересную ситуацию в игре согласно правилам и учитывая выбор пользователя. Помни JSON ответ!
             """, historyJson, actionUser);
 
             ChatMessage userMessage = ChatMessage.builder()
@@ -198,7 +198,7 @@ public class GigaChatService {
     private CompletionRequest buildRequest(List<ChatMessage> messages, String sessionId) {
         return CompletionRequest.builder()
                 .model(ModelName.GIGA_CHAT)
-                .temperature(0.5f)
+                .temperature(0.7f)
                 .messages(messages)
                 .build();
     }
