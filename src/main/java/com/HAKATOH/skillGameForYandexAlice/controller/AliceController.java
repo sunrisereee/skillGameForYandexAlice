@@ -11,7 +11,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.AllArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,6 +20,7 @@ import reactor.core.publisher.Mono;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @AllArgsConstructor
 @RestController
@@ -32,6 +32,19 @@ public class AliceController {
     private final ObjectMapper objectMapper;
     private final GigaChatSessionCache gigaChatSessionCache;
 
+    private static final String RULES_TEXT = """
+        Привет, путник. Ты попал в игру под названием Петля. Вот основные правила:
+        1. Ты проживаешь один и тот же день снова и снова
+        2. Стандартные действия приведут к повторению дня
+        3. Только неочевидные решения продвигают сюжет
+        4. Экспериментируй и ищи закономерности
+        
+        Доступные команды:
+        - "Правила" - показать это сообщение
+        - "Начать заново" или "новая" - начать игру заново""";
+
+    private static final String WELCOME_TEXT = RULES_TEXT + "\n\nЕсли готов, скажи \"Начать\"";
+
     @PostMapping("/game")
     public Mono<AliceResponse> handleAliceRequestGame(@RequestBody AliceRequest request) {
         String sessionId = request.getSession().getSession_id();
@@ -39,22 +52,107 @@ public class AliceController {
         String userMessage = request.getRequest().getCommand();
         GameState state = gameStateService.getState(userId);
 
-        if (shouldStartNewGame(userMessage, state)) {
+        if(userMessage.matches("(?i)(правила|помощь|help|как играть)")) {
+            return showRules();
+        }
+
+        if(shouldStartNewGame(userMessage, state)) {
+            if(isGameInProgress(state)) {
+                gameStateService.deleteState(userId);
+                return responseBuilder.buildSimpleResponseAsync(
+                        "Вы начали игру заново.\n\n" + WELCOME_TEXT,
+                        false
+                );
+            }
+            GameState newState = new GameState();
+            newState.setUserId(userId);
+            newState.setHistory(state.getHistory());
+            gameStateService.saveState(newState);
+
             return startNewGame(userId, sessionId);
         }
 
-        return continueGame(userId, userMessage, state, sessionId);
+        if(isGameInProgress(state)) {
+            try {
+                String selectedOption = parseUserChoice(userMessage, state);
+                if (selectedOption != null) {
+                    return continueGame(userId, selectedOption, state, sessionId);
+                }
+            } catch (Exception e) {
+                System.err.println("Ошибка обработки выбора: " + e.getMessage());
+            }
+            return continueGame(userId, userMessage, state, sessionId);
+        }
+
+        return showRules();
     }
 
     private boolean shouldStartNewGame(String userMessage, GameState state) {
         return state.getHistory() == null || state.getHistory().isEmpty() ||
-                userMessage.matches("(?i)(начать|новая|старт)");
+                userMessage.matches("(?i)(новая игра|старт|начать заново)");
+    }
+
+    private boolean isGameInProgress(GameState state) {
+        return state != null && state.getHistory() != null && !state.getHistory().isEmpty();
+    }
+
+    private Mono<AliceResponse> showRules() {
+        return responseBuilder.buildSimpleResponseAsync(WELCOME_TEXT, false);
+    }
+
+    private static final Pattern CHOICE_PATTERN = Pattern.compile(
+            "^\\s*(\\d+|перв(ый|ая|ое)?|втор(ой|ая|ое)?|трет(ий|ья|ье)?|четверт(ый|ая|ое)?|пят(ый|ая|ое)?|один|два|три|четыре|пять)\\s*$",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    private String parseUserChoice(String userInput, GameState state) throws JsonProcessingException {
+
+        // если ввод не похож на вариант - возвращаем как есть
+        if (!CHOICE_PATTERN.matcher(userInput).matches()) {
+            return userInput;
+        }
+
+        List<String> lastOptions = state.getLastOptionsHistory() != null ?
+                objectMapper.readValue(state.getLastOptionsHistory(), List.class) :
+                Collections.emptyList();
+
+        if (lastOptions.isEmpty()) {
+            return null;
+        }
+
+        int choiceIndex = getChoiceIndex(userInput);
+
+        if (choiceIndex >= 0 && choiceIndex < lastOptions.size()) {
+            return lastOptions.get(choiceIndex);
+        }
+
+        return null;
+    }
+
+    private static int getChoiceIndex(String userInput) {
+        String cleanInput = userInput.toLowerCase().trim();
+
+        int choiceIndex = -1;
+
+        //обработка числа
+        if (cleanInput.matches("\\d+")) {
+            choiceIndex = Integer.parseInt(cleanInput) - 1;
+        }
+
+        //обработка текста
+        else if (cleanInput.startsWith("перв") || cleanInput.equals("один")) choiceIndex = 0;
+        else if (cleanInput.startsWith("втор") || cleanInput.equals("два")) choiceIndex = 1;
+        else if (cleanInput.startsWith("трет") || cleanInput.equals("три")) choiceIndex = 2;
+        else if (cleanInput.startsWith("четвер") || cleanInput.equals("четыре")) choiceIndex = 3;
+        else if (cleanInput.startsWith("пят") || cleanInput.equals("пять")) choiceIndex = 4;
+        return choiceIndex;
     }
 
     private Mono<AliceResponse> startNewGame(String userId, String sessionId) {
         return gigachatService.getInitialGameResponse()
                 .flatMap(response -> {
-                    System.out.println("Гигачат начиниет игру" + response);
+                    System.out.println("Гигачат начинает игру" + response);
+
                     JsonNode responseNode = null;
                     try {
                         responseNode = objectMapper.readTree(response);
@@ -74,7 +172,13 @@ public class AliceController {
                         newState.setLastOptionsHistory(objectMapper.writeValueAsString(newOptions));
                         gameStateService.saveState(newState);
 
-                        return buildResponse(response, userId, sessionId);
+                        StringBuilder text = new StringBuilder(firstSituation)
+                                .append("\n\nВарианты:\n");
+                        for (int i = 0; i < newOptions.size(); i++) {
+                            text.append(i + 1).append(". ").append(newOptions.get(i)).append("\n");
+                        }
+
+                        return responseBuilder.buildSimpleResponseAsync(text.toString(), false);
                     } catch (JsonProcessingException e) {
                         throw new RuntimeException(e);
                     }
